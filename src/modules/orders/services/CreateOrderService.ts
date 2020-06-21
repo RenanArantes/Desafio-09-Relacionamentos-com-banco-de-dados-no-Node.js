@@ -32,27 +32,70 @@ class CreateOrderService {
   ) {}
 
   public async execute({ customer_id, products }: IRequest): Promise<Order> {
-    console.log('~~~~~~~~~~~~~~~~~~~~~~~~~~~');
+    // Check if customers exists
     const customer = await this.customersRepository.findById(customer_id);
 
     if (!customer) {
       throw new AppError('Customer not exists', 400);
     }
 
-    const productsIds = await products.map(product => ({ id: product.id }));
+    // Get all ids products of products in request
+    const productsIds = products.map(product => ({ id: product.id }));
 
+    // Get all products based on ids passed on request
     const productList = await this.productsRepository.findAllById(productsIds);
 
-    console.log(customer?.name);
+    // check if any product cant be added in order,
+    // cant be stoked quantity less than requested product,
+    // cant be stoked quantity - requested product less than zero,
+    products.filter(product => {
+      const stockedProduct = productList.find(
+        searchProduct => searchProduct.id === product.id,
+      );
+
+      if (
+        stockedProduct &&
+        stockedProduct.quantity - product.quantity <= 0 &&
+        stockedProduct.quantity < product.quantity
+      ) {
+        throw new AppError('Product out of stock');
+      }
+
+      return stockedProduct;
+    });
+
+    if (productList.length < products.length) {
+      throw new AppError('Invalid quantities');
+    }
+
+    const orderedProducts = productList.map(product => {
+      const productIndex = products.findIndex(p => p.id === product.id);
+
+      return {
+        product_id: product.id,
+        price: product.price,
+        quantity: products[productIndex].quantity,
+      };
+    });
 
     const order = await this.ordersRepository.create({
       customer,
-      products: productList.map(product => ({
-        product_id: product.id,
-        price: product.price,
-        quantity: product.quantity,
-      })),
+      products: orderedProducts,
     });
+
+    const stockUpdated = productList.map(product => {
+      const productIndex = products.findIndex(p => p.id === product.id);
+
+      return {
+        id: product.id,
+        quantity: products[productIndex].quantity,
+      };
+    });
+
+    console.log('Stock Atualizado');
+    console.log(stockUpdated);
+
+    await this.productsRepository.updateQuantity(stockUpdated);
 
     return order;
   }
